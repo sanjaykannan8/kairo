@@ -96,7 +96,16 @@ export default function ChatClient() {
   const [user, setUser] = useState<{ name?: string; picture?: string; email?: string }>({});
   const [userDbId, setUserDbId] = useState("");
   const [sessionId, setSessionId] = useState("");
-  const [profile, setProfile] = useState<any>({});
+  type Profile = {
+    height_cm?: number | null;
+    weight_kg?: number | null;
+    sleep_hours_per_night?: number | null;
+    dietary_preference?: string | null;
+    [key: string]: number | string | null | undefined;
+  };
+  type ProfileField = keyof Profile & string;
+
+  const [profile, setProfile] = useState<Profile>({});
   const [sessions, setSessions] = useState<any[]>([]);
 
   const [activeTab, setActiveTab] = useState<"Home" | "Chat" | "Leaderboard" | "Activity" | "Account">("Chat");
@@ -166,8 +175,8 @@ export default function ChatClient() {
     }
   }, [activeTab, userDbId]);
 
-  const updateProfile = (field: string, val: any) => {
-    setProfile(p => ({ ...p, [field]: val }));
+  const updateProfile = (field: ProfileField, val: Profile[ProfileField]) => {
+    setProfile(prev => ({ ...prev, [field]: val }));
     const token = localStorage.getItem("authToken");
     fetch(`${apiBase}/profile/${userDbId}`, {
       method: "PUT",
