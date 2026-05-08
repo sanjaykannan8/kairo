@@ -1006,9 +1006,15 @@ export default function ChatClient() {
           left: "50%", transform: "translateX(-50%)",
           background: "#c8503c", color: "#fff2ef",
           fontSize: "0.78rem", fontWeight: 600,
-          padding: "0.6rem 1.1rem", borderRadius: "100px",
+          padding: "0.6rem 0.95rem", borderRadius: "16px",
           boxShadow: "0 8px 24px rgba(200,80,60,.25)",
-          zIndex: 200, whiteSpace: "nowrap",
+          zIndex: 200,
+          maxWidth: "calc(100% - 2rem)",
+          width: "fit-content",
+          whiteSpace: "normal",
+          textAlign: "center",
+          lineHeight: 1.4,
+          wordBreak: "break-word",
           animation: "fadeUp .3s cubic-bezier(.32,.72,0,1) both",
         }}>
           {taskToast}
