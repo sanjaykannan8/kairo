@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { House, ChatCircleDots, Bell, User, PaperPlaneRight, Trophy, Crown, CheckCircle, ArrowsClockwise, SkipForward, Star } from "@phosphor-icons/react";
+import { House, ChatCircleDots, Bell, User, PaperPlaneRight, Trophy, Crown, CheckCircle, ArrowsClockwise, SkipForward, Star, Trash } from "@phosphor-icons/react";
 import Image from "next/image";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -10,6 +10,16 @@ const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 type Message = { id: string; role: "assistant" | "user"; text: string };
 
 const mkId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+const haversineMeters = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+  const R = 6371000;
+  const p1 = (a.lat * Math.PI) / 180;
+  const p2 = (b.lat * Math.PI) / 180;
+  const dp = ((b.lat - a.lat) * Math.PI) / 180;
+  const dl = ((b.lng - a.lng) * Math.PI) / 180;
+  const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+};
 
 const extractCard = (input: string, tag: "DISEASE_CARD" | "CLINIC_CARD") => {
   const startIdx = input.indexOf(`[${tag}:`);
@@ -119,6 +129,7 @@ export default function ChatClient() {
     difficulty: string; points_reward: number; duration_minutes: number;
     icon: string; is_chosen: boolean; is_completed: boolean; is_skipped: boolean;
     verification_status: string; distance_meters: number | null; needs_gps: boolean;
+    chosen_at?: string | null;
   };
   type LBEntry = { id: string; display_name: string; avatar_url: string | null; total_points: number; current_streak: number; };
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -129,6 +140,8 @@ export default function ChatClient() {
   const timerRef = useRef<number>(0);
   const locationRef = useRef<{lat: number; lng: number; accuracy?: number} | null>(null);
   const locationDeniedRef = useRef(false);
+  type TrackEntry = { watchId: number; last?: { lat: number; lng: number }; distance: number };
+  const gpsTrackRef = useRef<Record<string, TrackEntry>>({});
 
   const firstName = user.name?.split(" ")[0] ?? "there";
 
@@ -221,19 +234,77 @@ export default function ChatClient() {
     });
   };
 
+  const startTaskTracking = async (taskId: string, start?: { lat: number; lng: number } | null) => {
+    if (gpsTrackRef.current[taskId]) return;
+    if (!navigator.geolocation) {
+      setGpsToast("GPS unavailable in this browser.");
+      setTimeout(() => setGpsToast(null), 3500);
+      return;
+    }
+    const startPos = start ?? await getLocation();
+    if (!startPos) return;
+
+    const entry: TrackEntry = { watchId: 0, last: { lat: startPos.lat, lng: startPos.lng }, distance: 0 };
+    const watchId = navigator.geolocation.watchPosition(
+      p => {
+        const next = { lat: p.coords.latitude, lng: p.coords.longitude };
+        const prev = entry.last;
+        if (prev) {
+          const delta = haversineMeters(prev, next);
+          if (delta >= 5) entry.distance += delta;
+        }
+        entry.last = next;
+      },
+      err => {
+        const msg = err.code === 1 ? "Location access denied. GPS tracking stopped." : "GPS tracking error.";
+        setGpsToast(msg);
+        setTimeout(() => setGpsToast(null), 3500);
+      },
+      { timeout: 8000, maximumAge: 0, enableHighAccuracy: true },
+    );
+    entry.watchId = watchId;
+    gpsTrackRef.current[taskId] = entry;
+  };
+
+  const getTrackedDistance = (taskId: string) => gpsTrackRef.current[taskId]?.distance ?? null;
+
+  const stopTaskTracking = (taskId: string) => {
+    const entry = gpsTrackRef.current[taskId];
+    if (!entry) return null;
+    if (navigator.geolocation?.clearWatch) navigator.geolocation.clearWatch(entry.watchId);
+    delete gpsTrackRef.current[taskId];
+    return entry.distance;
+  };
+
+  useEffect(() => () => {
+    if (!navigator.geolocation?.clearWatch) return;
+    Object.values(gpsTrackRef.current).forEach(entry => {
+      navigator.geolocation.clearWatch(entry.watchId);
+    });
+  }, []);
+
   const toggleTask = async (taskId: string) => {
     const token = localStorage.getItem("authToken");
     const task  = tasks.find(t => t.id === taskId);
     const needsGps = task?.needs_gps ?? false;
+    const isStarting = !!task && !task.is_chosen;
+    const isCompleting = !!task && task.is_chosen && !task.is_completed;
+    const isUndoing = !!task && task.is_chosen && task.is_completed;
 
-    // Capture GPS for exercise / mindfulness tasks (non-blocking — null is fine)
+    // Capture GPS for walking tasks (non-blocking — null is fine)
     let location: {lat: number; lng: number} | null = null;
     if (needsGps) location = await getLocation();
+    const distance_meters = needsGps && isCompleting ? getTrackedDistance(taskId) : null;
 
     const res = await fetch(`${apiBase}/tasks/${taskId}/toggle`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "ngrok-skip-browser-warning": "true" },
-      body: JSON.stringify({ db_id: userDbId, lat: location?.lat ?? null, lng: location?.lng ?? null }),
+      body: JSON.stringify({
+        db_id: userDbId,
+        lat: location?.lat ?? null,
+        lng: location?.lng ?? null,
+        distance_meters,
+      }),
     });
     if (!res.ok) {
       let message = "Task not completed yet.";
@@ -253,12 +324,42 @@ export default function ChatClient() {
       verification_status: data.verification_status,
       distance_meters: data.distance_meters,
     } : t));
+    if (needsGps && isStarting && data.is_chosen) {
+      startTaskTracking(taskId, location);
+    }
+    if (needsGps && isCompleting && data.is_completed) {
+      stopTaskTracking(taskId);
+    }
+    if (needsGps && isUndoing && !data.is_completed) {
+      startTaskTracking(taskId, location);
+    }
   };
 
   const skipTask = async (taskId: string) => {
     const token = localStorage.getItem("authToken");
     await fetch(`${apiBase}/tasks/${taskId}/skip`, { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "ngrok-skip-browser-warning": "true" } });
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, is_skipped: true } : t));
+    stopTaskTracking(taskId);
+  };
+
+  const deleteTask = async (taskId: string) => {
+    const token = localStorage.getItem("authToken");
+    const res = await fetch(`${apiBase}/tasks/${taskId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}`, "ngrok-skip-browser-warning": "true" },
+    });
+    if (!res.ok) {
+      let message = "Unable to delete task.";
+      try {
+        const err = await res.json();
+        if (err?.detail) message = err.detail;
+      } catch { }
+      setTaskToast(message);
+      setTimeout(() => setTaskToast(null), 4000);
+      return;
+    }
+    setTasks(prev => prev.filter(t => t.id !== taskId));
+    stopTaskTracking(taskId);
   };
 
   const refreshTasks = async () => {
@@ -631,14 +732,18 @@ export default function ChatClient() {
         .task-badge { font-size:.65rem; font-weight:600; padding:.18rem .5rem; border-radius:100px; background:#f3f7e5; color:#3d5425; }
         .task-badge.pts { background:rgba(156,239,70,.18); color:#3d6e10; }
         .task-badge.done-badge { background:rgba(156,239,70,.25); color:#2a5200; }
-        .task-actions { display:flex; gap:.55rem; }
-        .btn-do { flex:1; background:#1f2b16; color:#9cef46; border:none; border-radius:.75rem; padding:.58rem 0; font-size:.8rem; font-weight:700; cursor:pointer; font-family:inherit; transition:all .25s cubic-bezier(.32,.72,0,1); display:flex; align-items:center; justify-content:center; gap:.35rem; }
+        .task-actions { display:flex; gap:.55rem; flex-wrap:wrap; }
+        .btn-do { flex:1 1 100%; background:#1f2b16; color:#9cef46; border:none; border-radius:.75rem; padding:.58rem 0; font-size:.8rem; font-weight:700; cursor:pointer; font-family:inherit; transition:all .25s cubic-bezier(.32,.72,0,1); display:flex; align-items:center; justify-content:center; gap:.35rem; }
         .btn-do.chosen { background:#f3f7e5; color:#1f2b16; border:1.5px solid rgba(156,239,70,.6); }
         .btn-do.done { background:rgba(156,239,70,.2); color:#2a5200; border:1.5px solid rgba(156,239,70,.4); }
         .btn-do:hover { opacity:.88; transform:scale(1.02); }
         .btn-do:active { transform:scale(.97); }
-        .btn-skip { flex:1; background:transparent; color:#9aa889; border:1px solid rgba(31,43,22,.08); border-radius:.75rem; padding:.58rem 0; font-size:.8rem; font-weight:600; cursor:pointer; font-family:inherit; transition:all .25s cubic-bezier(.32,.72,0,1); display:flex; align-items:center; justify-content:center; gap:.35rem; }
+        .btn-do:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+        .btn-skip, .btn-delete { flex:1 1 calc(50% - 0.3rem); background:transparent; border-radius:.75rem; padding:.58rem 0; font-size:.8rem; font-weight:600; cursor:pointer; font-family:inherit; transition:all .25s cubic-bezier(.32,.72,0,1); display:flex; align-items:center; justify-content:center; gap:.35rem; }
+        .btn-skip { color:#9aa889; border:1px solid rgba(31,43,22,.08); }
         .btn-skip:hover { background:#f3f7e5; color:#607a3d; }
+        .btn-delete { color:#c8503c; border:1px solid rgba(200,80,60,.3); }
+        .btn-delete:hover { background:rgba(200,80,60,.08); }
       `}</style>
 
       {/* Main Content Area */}
@@ -777,7 +882,7 @@ export default function ChatClient() {
                         onClick={() => toggleTask(task.id)}
                       >
                         {task.is_completed
-                          ? <><CheckCircle size={14} weight="fill" /> Done</>  
+                          ? <><CheckCircle size={14} weight="fill" /> Done</>
                           : task.is_chosen
                             ? "Mark as Done"
                             : "I'll do it"}
@@ -785,6 +890,15 @@ export default function ChatClient() {
                       {!task.is_chosen && (
                         <button className="btn-skip" onClick={() => skipTask(task.id)}>
                           <SkipForward size={13} weight="bold" /> Skip
+                        </button>
+                      )}
+                      {!task.is_completed && (
+                        <button
+                          className="btn-delete"
+                          style={!task.is_chosen ? undefined : { flex: "1 1 100%" }}
+                          onClick={() => deleteTask(task.id)}
+                        >
+                          <Trash size={13} weight="bold" /> Delete
                         </button>
                       )}
                     </div>
