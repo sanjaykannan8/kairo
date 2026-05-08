@@ -132,9 +132,11 @@ export default function ChatClient() {
     chosen_at?: string | null;
   };
   type LBEntry = { id: string; display_name: string; avatar_url: string | null; total_points: number; current_streak: number; };
+  type Badge = { id: string; name: string; description?: string | null; icon?: string | null; earned_at?: string | null; };
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [leaderboard, setLeaderboard] = useState<LBEntry[]>([]);
+  const [badges, setBadges] = useState<Badge[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<number>(0);
@@ -144,6 +146,14 @@ export default function ChatClient() {
   const gpsTrackRef = useRef<Record<string, TrackEntry>>({});
 
   const firstName = user.name?.split(" ")[0] ?? "there";
+
+  const badgeIcon = (badge: Badge) => {
+    if (!badge.icon) return "🏅";
+    if (badge.icon === "gold") return "🥇";
+    if (badge.icon === "silver") return "🥈";
+    if (badge.icon === "bronze") return "🥉";
+    return badge.icon;
+  };
 
   // ── JWT gate ──
   useEffect(() => {
@@ -177,6 +187,13 @@ export default function ChatClient() {
         .then(r => r.json())
         .then(d => setSessions(d.sessions || []))
         .catch(() => { });
+    }
+    if ((activeTab === "Account" || activeTab === "Activity") && userDbId) {
+      const token = localStorage.getItem("authToken");
+      fetch(`${apiBase}/profile/${userDbId}/badges`, { headers: { Authorization: `Bearer ${token}`, "ngrok-skip-browser-warning": "true" } })
+        .then(r => r.json())
+        .then(d => setBadges(d.badges || []))
+        .catch(() => setBadges([]));
     }
     if (activeTab === "Leaderboard" && userDbId) {
       const token = localStorage.getItem("authToken");
@@ -969,6 +986,28 @@ export default function ChatClient() {
 
         {activeTab === "Activity" && (
           <div className="welcome" style={{ marginTop: "2rem", paddingBottom: "2rem", alignItems: "flex-start", padding: "0 1rem" }}>
+            <div style={{ width: "100%", marginBottom: "1.25rem" }}>
+              <h3 style={{ fontSize: "0.95rem", marginBottom: "0.5rem", color: "#3d5425", paddingLeft: "0.25rem" }}>Badges</h3>
+              {badges.length === 0 ? (
+                <div style={{ background: "#fff", borderRadius: "1rem", padding: "0.9rem 1rem", boxShadow: "0 2px 8px rgba(31,43,22,0.04)", fontSize: "0.8rem", color: "#607a3d" }}>
+                  No badges yet.
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: "0.75rem", overflowX: "auto", paddingBottom: "0.5rem" }}>
+                  {badges.map(badge => (
+                    <div key={badge.id} style={{ minWidth: "110px", background: "#fff", padding: "0.8rem 0.6rem", borderRadius: "1rem", textAlign: "center", boxShadow: "0 2px 8px rgba(31,43,22,0.04)" }}>
+                      <div style={{ fontSize: "1.4rem", marginBottom: "0.25rem" }}>{badgeIcon(badge)}</div>
+                      <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#1f2b16" }}>{badge.name}</div>
+                      {badge.earned_at && (
+                        <div style={{ fontSize: "0.65rem", color: "#9aa889", marginTop: "0.2rem" }}>
+                          {new Date(badge.earned_at).toLocaleDateString()}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             <h2 style={{ fontSize: "1.25rem", marginBottom: "1rem", textAlign: "left", width: "100%" }}>Conversations</h2>
             {sessions.length === 0 ? (
               <div style={{ textAlign: "center", width: "100%", marginTop: "3rem", opacity: 0.6 }}>
@@ -1042,20 +1081,23 @@ export default function ChatClient() {
             {/* Achieved Badges */}
             <div style={{ width: "100%", maxWidth: "340px", textAlign: "left", marginTop: "3.5rem" }}>
               <h3 style={{ fontSize: "0.95rem", marginBottom: "0.5rem", color: "#3d5425", paddingLeft: "0.5rem" }}>Achieved Badges</h3>
-              <div style={{ display: "flex", gap: "0.75rem", overflowX: "auto", paddingBottom: "0.5rem" }}>
-                <div style={{ minWidth: "80px", background: "#fff", padding: "1rem 0.5rem", borderRadius: "1rem", textAlign: "center", boxShadow: "0 2px 8px rgba(31,43,22,0.04)" }}>
-                  <div style={{ fontSize: "1.5rem", marginBottom: "0.25rem" }}>🔥</div>
-                  <div style={{ fontSize: "0.7rem", fontWeight: 600, color: "#1f2b16" }}>7 Day<br />Streak</div>
+              {badges.length === 0 ? (
+                <div style={{ background: "#fff", borderRadius: "1rem", padding: "0.9rem 1rem", boxShadow: "0 2px 8px rgba(31,43,22,0.04)", fontSize: "0.8rem", color: "#607a3d" }}>
+                  No badges yet. Reach the top of the leaderboard to earn one.
                 </div>
-                <div style={{ minWidth: "80px", background: "#fff", padding: "1rem 0.5rem", borderRadius: "1rem", textAlign: "center", boxShadow: "0 2px 8px rgba(31,43,22,0.04)" }}>
-                  <div style={{ fontSize: "1.5rem", marginBottom: "0.25rem" }}>💧</div>
-                  <div style={{ fontSize: "0.7rem", fontWeight: 600, color: "#1f2b16" }}>Hydration<br />Hero</div>
+              ) : (
+                <div style={{ display: "flex", gap: "0.75rem", overflowX: "auto", paddingBottom: "0.5rem" }}>
+                  {badges.map(badge => (
+                    <div key={badge.id} style={{ minWidth: "110px", background: "#fff", padding: "0.9rem 0.6rem", borderRadius: "1rem", textAlign: "center", boxShadow: "0 2px 8px rgba(31,43,22,0.04)" }}>
+                      <div style={{ fontSize: "1.5rem", marginBottom: "0.25rem" }}>{badgeIcon(badge)}</div>
+                      <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#1f2b16" }}>{badge.name}</div>
+                      {badge.description && (
+                        <div style={{ fontSize: "0.65rem", color: "#9aa889", marginTop: "0.25rem" }}>{badge.description}</div>
+                      )}
+                    </div>
+                  ))}
                 </div>
-                <div style={{ minWidth: "80px", background: "#fff", padding: "1rem 0.5rem", borderRadius: "1rem", textAlign: "center", boxShadow: "0 2px 8px rgba(31,43,22,0.04)", opacity: 0.5 }}>
-                  <div style={{ fontSize: "1.5rem", marginBottom: "0.25rem" }}>🏃</div>
-                  <div style={{ fontSize: "0.7rem", fontWeight: 600, color: "#1f2b16" }}>10k<br />Club</div>
-                </div>
-              </div>
+              )}
             </div>
 
             <div id="health-metrics" style={{ width: "100%", maxWidth: "340px", textAlign: "left", marginTop: "1.5rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
