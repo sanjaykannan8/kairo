@@ -186,6 +186,7 @@ export default function ChatClient() {
   };
 
   const [gpsToast, setGpsToast] = useState<string | null>(null);
+  const [taskToast, setTaskToast] = useState<string | null>(null);
 
   /** Request GPS. Returns null silently if denied or context is insecure. */
   const getLocation = (): Promise<{lat: number; lng: number; accuracy?: number} | null> => {
@@ -234,16 +235,24 @@ export default function ChatClient() {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "ngrok-skip-browser-warning": "true" },
       body: JSON.stringify({ db_id: userDbId, lat: location?.lat ?? null, lng: location?.lng ?? null }),
     });
-    if (res.ok) {
-      const data = await res.json();
-      setTasks(prev => prev.map(t => t.id === taskId ? {
-        ...t,
-        is_chosen: data.is_chosen,
-        is_completed: data.is_completed,
-        verification_status: data.verification_status,
-        distance_meters: data.distance_meters,
-      } : t));
+    if (!res.ok) {
+      let message = "Task not completed yet.";
+      try {
+        const err = await res.json();
+        if (err?.detail) message = err.detail;
+      } catch { }
+      setTaskToast(message);
+      setTimeout(() => setTaskToast(null), 4000);
+      return;
     }
+    const data = await res.json();
+    setTasks(prev => prev.map(t => t.id === taskId ? {
+      ...t,
+      is_chosen: data.is_chosen,
+      is_completed: data.is_completed,
+      verification_status: data.verification_status,
+      distance_meters: data.distance_meters,
+    } : t));
   };
 
   const skipTask = async (taskId: string) => {
@@ -987,6 +996,22 @@ export default function ChatClient() {
             <circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" strokeWidth="2.5" fill="none"/>
           </svg>
           {gpsToast}
+        </div>
+      )}
+
+      {/* Task Error Toast */}
+      {taskToast && (
+        <div style={{
+          position: "fixed", bottom: "calc(130px + env(safe-area-inset-bottom,0px))",
+          left: "50%", transform: "translateX(-50%)",
+          background: "#c8503c", color: "#fff2ef",
+          fontSize: "0.78rem", fontWeight: 600,
+          padding: "0.6rem 1.1rem", borderRadius: "100px",
+          boxShadow: "0 8px 24px rgba(200,80,60,.25)",
+          zIndex: 200, whiteSpace: "nowrap",
+          animation: "fadeUp .3s cubic-bezier(.32,.72,0,1) both",
+        }}>
+          {taskToast}
         </div>
       )}
 
